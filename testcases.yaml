@@ -1,0 +1,370 @@
+# tests.yaml
+version: "1.0"
+service: "api-example"
+base_url: "https://api.example.com"
+
+tests:
+  - id: TC-001
+    name: "Create user - happy path"
+    description: "Create a new user with valid payload; expect 201 Created and Location header."
+    method: POST
+    path: /api/v1/users
+    headers:
+      Content-Type: application/json
+      Accept: application/json
+      Authorization: "ApiKey {{API_KEY}}"
+    body_ref: payloads.create_user_valid
+    expected_status: 201
+    expected_headers:
+      - "Location: /api/v1/users/"
+      - "Content-Type: application/json; charset=utf-8"
+    notes: "Server should return Location header pointing to new resource and a JSON body with 'id'."
+
+  - id: TC-002
+    name: "Create user - missing required field"
+    description: "Missing 'email' should produce 400 and validation errors in body."
+    method: POST
+    path: /api/v1/users
+    headers:
+      Content-Type: application/json
+      Accept: application/json
+      Authorization: "ApiKey {{API_KEY}}"
+    body_ref: payloads.create_user_missing_email
+    expected_status: 400
+    expected_headers:
+      - "Content-Type: application/problem+json"
+    notes: "Follow RFC 7807 style problem details."
+
+  - id: TC-003
+    name: "Create user - SQLi attempt"
+    description: "Payload contains SQL meta-characters to verify server input sanitization."
+    method: POST
+    path: /api/v1/users
+    headers:
+      Content-Type: application/json
+      Accept: application/json
+      Authorization: "ApiKey {{API_KEY}}"
+    body_ref: payloads.create_user_sqli
+    expected_status: 422
+    expected_headers:
+      - "Content-Type: application/json"
+    notes: "Server should treat payload as data and either validate/reject; must not return DB errors."
+
+  - id: TC-004
+    name: "Login - valid credentials (JWT)"
+    description: "Obtain JWT token via /auth/login; confirm token returned and expiration fields."
+    method: POST
+    path: /api/v1/auth/login
+    headers:
+      Content-Type: application/json
+      Accept: application/json
+    body_ref: payloads.login_valid
+    expected_status: 200
+    expected_headers:
+      - "Content-Type: application/json"
+    expected_body_contains:
+      - "access_token"
+      - "expires_in"
+    notes: "Token should be JWT signed with server-side secret; verify structure (3 dot-separated parts)."
+
+  - id: TC-005
+    name: "Auth-required endpoint without token"
+    description: "Call protected endpoint without Authorization header -> expect 401 Unauthorized"
+    method: GET
+    path: /api/v1/users/me
+    headers:
+      Accept: application/json
+    expected_status: 401
+    expected_headers:
+      - "WWW-Authenticate: Bearer"
+    notes: "Ensure endpoints fail closed."
+
+  - id: TC-006
+    name: "Auth-required endpoint with expired token"
+    description: "Using an expired token must return 401 and not 403; token introspection may be used"
+    method: GET
+    path: /api/v1/users/me
+    headers:
+      Accept: application/json
+      Authorization: "Bearer {{EXPIRED_JWT}}"
+    expected_status: 401
+    notes: "Differentiate between authentication (401) and authorization (403)."
+
+  - id: TC-007
+    name: "Idempotency - PUT vs POST"
+    description: "PUT to /items/{id} should be idempotent: two identical requests produce same effect and status 200/204"
+    method: PUT
+    path: /api/v1/items/1234
+    headers:
+      Content-Type: application/json
+      Authorization: "ApiKey {{API_KEY}}"
+    body_ref: payloads.update_item_valid
+    expected_status: 200
+    notes: "Subsequent PUT with same body should return 200 and not create duplicate resources."
+
+  - id: TC-008
+    name: "PATCH partial update - invalid field"
+    description: "PATCH with unknown field should return 400 or 422 depending on validation policy."
+    method: PATCH
+    path: /api/v1/items/1234
+    headers:
+      Content-Type: application/json
+      Authorization: "ApiKey {{API_KEY}}"
+    body_ref: payloads.patch_invalid_field
+    expected_status: 422
+    notes: "Prefer 422 Unprocessable Entity for validation errors."
+
+  - id: TC-009
+    name: "Rate limiting - burst exceed"
+    description: "Send 25 requests in 10s to an endpoint configured to allow 10r/s -> expect 429."
+    method: GET
+    path: /api/v1/items
+    headers:
+      Accept: application/json
+      Authorization: "ApiKey {{API_KEY}}"
+    repeat: 25
+    concurrency: 5
+    expected_status: 429
+    expected_headers:
+      - "Retry-After"
+    notes: "Gateway should include Retry-After or X-RateLimit headers."
+
+  - id: TC-010
+    name: "Pagination - page token style"
+    description: "Request /items?page_size=5 validate next_page_token and consistent ordering."
+    method: GET
+    path: /api/v1/items?page_size=5
+    headers:
+      Accept: application/json
+      Authorization: "ApiKey {{API_KEY}}"
+    expected_status: 200
+    expected_headers:
+      - "Content-Type: application/json"
+    expected_body_contains:
+      - "next_page_token"
+    notes: "Ensure stable sort key (e.g., created_at,id) to avoid duplicates across pages."
+
+  - id: TC-011
+    name: "Content negotiation - accept header"
+    description: "Request with Accept: application/xml -> if server supports XML, return 200+xml; otherwise 406."
+    method: GET
+    path: /api/v1/items/1234
+    headers:
+      Accept: application/xml
+    expected_status: [200, 406]
+    notes: "Server may either support XML or return 406 Not Acceptable."
+
+  - id: TC-012
+    name: "CORS - preflight check"
+    description: "Simulate OPTIONS preflight from browser with Origin header and Access-Control-Request-Method"
+    method: OPTIONS
+    path: /api/v1/items
+    headers:
+      Origin: "https://client.example.com"
+      Access-Control-Request-Method: POST
+      Access-Control-Request-Headers: Content-Type, Authorization
+    expected_status: 204
+    expected_headers:
+      - "Access-Control-Allow-Origin: https://client.example.com"
+      - "Access-Control-Allow-Methods"
+    notes: "Server should only allow whitelisted origins."
+
+  - id: TC-013
+    name: "Large payload - 10MB body"
+    description: "Send large JSON body to detect parser memory issues; server should respect max payload limit."
+    method: POST
+    path: /api/v1/uploads
+    headers:
+      Content-Type: application/json
+      Authorization: "ApiKey {{API_KEY}}"
+    body_ref: payloads.large_payload_10mb
+    expected_status: 413
+    notes: "Expect 413 Payload Too Large or graceful handling."
+
+  - id: TC-014
+    name: "Binary upload (multipart) - file ext validation"
+    description: "Upload .exe disguised as .png; server must validate file headers and reject if disallowed"
+    method: POST
+    path: /api/v1/uploads
+    headers:
+      Content-Type: multipart/form-data; boundary=----
+      Authorization: "ApiKey {{API_KEY}}"
+    body_ref: payloads.binary_disguised_exe
+    expected_status: 415
+    notes: "Use magic-bytes check, not just extension."
+
+  - id: TC-015
+    name: "HTTP method override attempt"
+    description: "Send POST with X-HTTP-Method-Override: DELETE to test gateway handling."
+    method: POST
+    path: /api/v1/items/1234
+    headers:
+      Content-Type: application/json
+      X-HTTP-Method-Override: DELETE
+      Authorization: "ApiKey {{API_KEY}}"
+    expected_status: [200, 405, 403]
+    notes: "Depending on policy override may be allowed/blocked."
+
+  - id: TC-016
+    name: "Cache control test"
+    description: "GET with Cache-Control: no-cache to ensure server respects client cache directives."
+    method: GET
+    path: /api/v1/items/1234
+    headers:
+      Cache-Control: no-cache
+    expected_status: 200
+    expected_headers:
+      - "Cache-Control"
+    notes: "Confirm ETag or Last-Modified headers when caching is used."
+
+  - id: TC-017
+    name: "Open redirect check"
+    description: "Supply redirect URL in parameters and expect server to validate domain."
+    method: GET
+    path: /redirect?url=https://malicious.example
+    headers:
+      Accept: text/html
+    expected_status: 400
+    notes: "Open redirect should be rejected or sanitized."
+
+  - id: TC-018
+    name: "JSON parse robustness - trailing commas"
+    description: "Send JSON with trailing commas; server should reject with 400 not crash."
+    method: POST
+    path: /api/v1/parser-test
+    headers:
+      Content-Type: application/json
+    body_ref: payloads.trailing_commas
+    expected_status: 400
+    notes: "Validate parser resilience."
+
+  - id: TC-019
+    name: "Time-based access - clock skew"
+    description: "Send request using time-limited token where client's clock is skewed; server should accept small skew or return 401."
+    method: GET
+    path: /api/v1/time-sensitive
+    headers:
+      Authorization: "Bearer {{JWT_WITH_SKEW}}"
+    expected_status: [200, 401]
+    notes: "Server may allow N seconds of skew."
+
+  - id: TC-020
+    name: "Error path - internal error leak"
+    description: "Force an internal server error (e.g., DB down) and ensure response does not leak stack trace."
+    method: GET
+    path: /api/v1/force-500
+    headers:
+      Accept: application/json
+    expected_status: 500
+    expected_body_not_contains:
+      - "stack"
+      - "SQLException"
+    notes: "Return generic message and tracking id for debugging."
+
+  - id: TC-021
+    name: "GraphQL introspection disabled"
+    description: "If service exposes GraphQL, ensure introspection is disabled in production."
+    method: POST
+    path: /graphql
+    headers:
+      Content-Type: application/json
+    body_ref: payloads.graphql_introspection
+    expected_status: 403
+    notes: "Block schema leakage."
+
+  - id: TC-022
+    name: "SSRF test - URL fetch"
+    description: "Submit URL field that points to internal metadata service (http://169.254.169.254) and expect rejection."
+    method: POST
+    path: /api/v1/fetch-url
+    headers:
+      Content-Type: application/json
+      Authorization: "ApiKey {{API_KEY}}"
+    body_ref: payloads.ssrf_internal_metadata
+    expected_status: 400
+    notes: "Validate remote fetch against allowlist and use resolver inspections."
+
+  - id: TC-023
+    name: "Header injection attempt"
+    description: "Inject CRLF in header values; server should sanitize and reject."
+    method: GET
+    path: /api/v1/header-test
+    headers:
+      X-Custom: "normal%0d%0aInjected: yes"
+    expected_status: 400
+    notes: "Prevent response-splitting."
+
+  - id: TC-024
+    name: "ETag concurrency control"
+    description: "Ensure conditional updates with If-Match/If-None-Match behave correctly."
+    method: PUT
+    path: /api/v1/items/1234
+    headers:
+      Content-Type: application/json
+      If-Match: "{{ETAG}}"
+      Authorization: "ApiKey {{API_KEY}}"
+    body_ref: payloads.update_item_valid
+    expected_status: [200, 412]
+    notes: "If ETag mismatch return 412 Precondition Failed."
+
+  - id: TC-025
+    name: "Telemetry header propagation"
+    description: "Verify tracing header (e.g., X-B3-TraceId or traceparent) is accepted and forwarded."
+    method: GET
+    path: /api/v1/trace
+    headers:
+      traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+    expected_status: 200
+    notes: "Helpful for observability."
+
+  - id: TC-026
+    name: "Locale/encoding attacks - unicode normalization"
+    description: "Send inputs with homoglyphs and tricky Unicode sequences to check normalization logic."
+    method: POST
+    path: /api/v1/username-check
+    headers:
+      Content-Type: application/json
+    body_ref: payloads.unicode_homoglyphs
+    expected_status: 422
+    notes: "Normalization before uniqueness checks is required."
+
+  - id: TC-027
+    name: "TLS enforcement"
+    description: "Attempt HTTP (non-TLS) request to endpoint that must require TLS; expect redirect or 403."
+    method: GET
+    path: /api/v1/secure-endpoint
+    expected_status: [301, 308, 403]
+    notes: "Prefer 308 Permanent Redirect to https."
+
+  - id: TC-028
+    name: "Response time SLA - 95th percentile"
+    description: "Load test and assert 95th percentile < X ms."
+    method: GET
+    path: /api/v1/items
+    concurrency: 50
+    duration_seconds: 60
+    expected_sla:
+      p95_ms: 500
+    notes: "Used for performance gating."
+
+  - id: TC-029
+    name: "Header size limit"
+    description: "Send oversized header to test gateway limit handling; must not crash."
+    method: GET
+    path: /api/v1/header-test
+    headers:
+      X-Long: "{{very_long_value}}"
+    expected_status: 431
+    notes: "Expect 431 Request Header Fields Too Large."
+
+  - id: TC-030
+    name: "Deletion - cascading effect"
+    description: "Delete parent resource and validate child-resource cleanup or orphan policy."
+    method: DELETE
+    path: /api/v1/projects/777
+    headers:
+      Authorization: "ApiKey {{API_KEY}}"
+    expected_status: 204
+    notes: "Either cascade delete or mark children; document behavior."
+
+# end of tests.yaml
