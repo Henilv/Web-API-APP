@@ -1,0 +1,85 @@
+# configs.yaml
+nginx_proxy_tls_rate_limit:
+  description: "Nginx snippet to enforce TLS, HSTS, basic rate-limiting and header hardening."
+  snippet: |
+    server {
+        listen 80;
+        server_name api.example.com;
+        return 308 https://$host$request_uri;
+    }
+
+    server {
+        listen 443 ssl;
+        server_name api.example.com;
+
+        ssl_certificate /etc/ssl/certs/api.example.com.crt;
+        ssl_certificate_key /etc/ssl/private/api.example.com.key;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_prefer_server_ciphers on;
+
+        add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
+        add_header X-Frame-Options DENY;
+        add_header X-Content-Type-Options nosniff;
+        add_header Referrer-Policy "no-referrer";
+
+        # rate limiting
+        limit_req_zone $binary_remote_addr zone=api_rl:10m rate=10r/s;
+        limit_req zone=api_rl burst=20 nodelay;
+
+        location / {
+            proxy_pass http://upstream_api;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+    }
+
+openapi_minimal:
+  description: "Minimal OpenAPI fragment with security schemes and example endpoint."
+  snippet: |
+    openapi: 3.0.3
+    info:
+      title: API Example
+      version: "1.0.0"
+    servers:
+      - url: https://api.example.com
+    components:
+      securitySchemes:
+        ApiKeyAuth:
+          type: apiKey
+          in: header
+          name: X-API-Key
+        BearerAuth:
+          type: http
+          scheme: bearer
+          bearerFormat: JWT
+    paths:
+      /api/v1/users:
+        post:
+          summary: Create user
+          requestBody:
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/UserCreate'
+          responses:
+            '201':
+              description: Created
+
+cognito_jwks_check:
+  description: "Example: use JWKS URI to validate tokens in gateway (conceptual)"
+  notes: "Configure middleware to fetch jwks_uri and cache keys; validate kid and alg."
+
+cors_config:
+  allowedOrigins:
+    - "https://app.example.com"
+  allowedMethods:
+    - GET
+    - POST
+    - PUT
+    - PATCH
+    - DELETE
+  allowedHeaders:
+    - Content-Type
+    - Authorization
+  allowCredentials: true
