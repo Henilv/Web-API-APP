@@ -1,0 +1,73 @@
+# payloads.yaml
+create_user_valid:
+  name: "Alice Example"
+  email: "alice@example.com"
+  password: "Str0ngP@ssw0rd!"
+  meta:
+    signup_source: "web"
+
+create_user_missing_email:
+  name: "Bob"
+  password: "abc123"
+  meta:
+    signup_source: "web"
+
+create_user_sqli:
+  name: "Mallory"
+  email: "mallory@example.com'); DROP TABLE users; --"
+  password: "irrelevant"
+
+login_valid:
+  username: "alice@example.com"
+  password: "Str0ngP@ssw0rd!"
+
+update_item_valid:
+  title: "Updated title"
+  description: "Corrected description"
+  price: 19.95
+  tags:
+    - "tools"
+    - "dev"
+
+patch_invalid_field:
+  unknown_field: "some-data"
+
+large_payload_10mb: |
+  # generate JSON array with repeated pattern until ~10MB; for test harness, generate programmatically.
+
+binary_disguised_exe:
+  # multipart with file param 'file' where filename=pic.png but file binary magic bytes = MZ...
+  filename: "avatar.png"
+  content_description: "binary stream with exe header"
+
+trailing_commas: |
+  { "a": 1, "b": 2, }
+
+graphql_introspection:
+  query: "{ __schema { types { name } } }"
+
+ssrf_internal_metadata:
+  url: "http://169.254.169.254/latest/meta-data/iam/security-credentials/"
+
+trailing_commas:
+  # duplicate key avoided above -- see literal block example
+
+graphql_query_simple:
+  query: |
+    query {
+      items(limit: 10) {
+        id
+        title
+      }
+    }
+
+unicode_homoglyphs:
+  username: "аlіce"   # uses Cyrillic a, Cyrillic i (homoglyph attack)
+
+# Add generator hints for testers:
+generators:
+  very_long_value:
+    pattern: "A"
+    repeat: 32768
+
+# end of payloads.yaml
